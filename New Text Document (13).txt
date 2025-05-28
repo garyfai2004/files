@@ -1,0 +1,46 @@
+WITH FilteredData AS (
+            SELECT 
+            instrument, 
+            issuer, 
+            underlying, 
+            strike_price, 
+            maturity, 
+            ask_iv, 
+            inst_ask 
+            FROM ReferenceGreeks 
+            WHERE trade_date = CAST(GETDATE() AS DATE) 
+            AND trade_time ='09:37:55.0000000'
+            ), 
+            GroupedData AS (
+            SELECT 
+            f.*, 
+            g.underlying AS group_underlying, 
+            g.strike_price AS group_strike, 
+            g.maturity AS group_maturity, 
+            g.ask_iv AS group_ask_iv, 
+            g.inst_ask AS group_inst_ask 
+            FROM FilteredData f 
+            INNER JOIN ReferenceGreeks g 
+            ON g.underlying = f.underlying 
+            AND g.strike_price BETWEEN 0.995 * f.strike_price AND 1.005 * f.strike_price 
+            AND g.maturity BETWEEN DATEADD(DAY, -10, f.maturity) AND DATEADD(DAY, 10, f.maturity) 
+            AND g.trade_date = CAST(GETDATE() AS DATE) 
+            AND g.trade_time = '09:37:55.0000000'
+            ) 
+			SELECT 
+            instrument, 
+            underlying, 
+            strike_price, 
+            maturity, 
+            ask_iv, 
+            MAX(group_inst_ask) AS inst_ask, 
+            MAX(group_ask_iv) AS first_askiv, 
+            MAX(CASE WHEN rk = 2 THEN group_ask_iv END) AS second_askiv, 
+            MAX(CASE WHEN rk = case when (cast(cnt as float) / 2) = cnt / 2 then cnt / 2 else  (cnt / 2) + 1 end then group_ask_iv END) AS median_askiv, 
+            SUM(CASE WHEN group_ask_iv < ask_iv THEN 1  ELSE 0 END) +  case when (SUM(CASE WHEN group_ask_iv = ask_iv THEN 1  ELSE 0 END) > 0 ) then SUM(CASE WHEN group_ask_iv = ask_iv THEN 1  ELSE 0 END) - 1 else 0 end + 1 AS current_rank , 
+            COUNT(*) AS instru_count
+            FROM ( 
+            SELECT *, 
+            ROW_NUMBER() OVER (PARTITION BY instrument ORDER BY group_ask_iv) AS rk, 
+            COUNT(*) OVER (PARTITION BY instrument) AS cnt 
+            FROM GroupedData where issuer = 'BI') t GROUP BY instrument, underlying, strike_price, maturity, ask_iv ORDER BY instrument;
